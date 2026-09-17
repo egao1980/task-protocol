@@ -58,54 +58,48 @@
   (task-protocol:decode-event (task-protocol:encode-event event :codec codec)
                               :codec codec))
 
-(deftest-parametrize sexp-plist-nested-roundtrip
-    ((payload)
-     (#("a" "b"))
-     (#("a" "b" "c" "d"))
-     (#())
-     (#("only"))
-     (((:a "b")))
-     (((:items #("a" "b") :obj (:k 1))))
-     (((:deep #(#("a" "b") (:x 1) #(#("y" "z"))))))
-     (((:mixed #("a" "b") :obj (:k #("c" "d")) :n 3)))
-     ((#("nest" #("a" "b") (:flag t)))))
-  (let* ((event (%step-with-result payload))
-         (copy (%roundtrip event :codec :sexp-plist)))
-    (ok (typep copy 'task-protocol:step-completed))
-    (ok (%payload-equal payload (task-protocol:step-result copy)))
-    (when (and (vectorp payload) (not (stringp payload)))
-      (ok (and (vectorp (task-protocol:step-result copy))
-               (not (consp (task-protocol:step-result copy))))))
-    (ok (equal "run-c" (task-protocol:run-id-value
-                        (task-protocol:event-run-id copy))))
-    (ok (equal "act-c" (task-protocol:activation-id-value
-                        (task-protocol:event-activation-id copy))))))
+(defparameter *nested-roundtrip-payloads*
+  '(#("a" "b")
+    #("a" "b" "c" "d")
+    #()
+    #("only")
+    (:a "b")
+    (:items #("a" "b") :obj (:k 1))
+    (:deep #(#("a" "b") (:x 1) #(#("y" "z"))))
+    (:mixed #("a" "b") :obj (:k #("c" "d")) :n 3)
+    #("nest" #("a" "b") (:flag t))))
 
-(deftest-parametrize json-object-nested-roundtrip
-    ((payload)
-     (#("a" "b"))
-     (#("a" "b" "c" "d"))
-     (#())
-     (#("only"))
-     (((:a "b")))
-     (((:items #("a" "b") :obj (:k 1))))
-     (((:deep #(#("a" "b") (:x 1) #(#("y" "z"))))))
-     (((:mixed #("a" "b") :obj (:k #("c" "d")) :n 3)))
-     ((#("nest" #("a" "b") (:flag t)))))
-  (let* ((event (%step-with-result payload))
-         (encoded (task-protocol:encode-event event :codec :json-object))
-         (copy (task-protocol:decode-event encoded :codec :json-object)))
-    (ok (hash-table-p encoded))
-    (ok (typep copy 'task-protocol:step-completed))
-    (ok (%payload-equal payload (task-protocol:step-result copy)))
-    (when (and (vectorp payload) (not (stringp payload)))
-      (ok (and (vectorp (task-protocol:step-result copy))
-               (not (consp (task-protocol:step-result copy))))))
-    (ok (equal "0.2.1" (task-protocol:event-schema-version copy)))
-    (ok (equal "run-c" (task-protocol:run-id-value
-                        (task-protocol:event-run-id copy))))
-    (ok (equal "act-c" (task-protocol:activation-id-value
-                        (task-protocol:event-activation-id copy))))))
+(defun %assert-nested-roundtrip (payload copy &key encoded schema-version)
+  (when encoded
+    (ok (hash-table-p encoded)))
+  (ok (typep copy 'task-protocol:step-completed))
+  (ok (%payload-equal payload (task-protocol:step-result copy)))
+  (when (and (vectorp payload) (not (stringp payload)))
+    (ok (vectorp (task-protocol:step-result copy)))
+    (ok (not (consp (task-protocol:step-result copy)))))
+  (when schema-version
+    (ok (equal schema-version (task-protocol:event-schema-version copy))))
+  (ok (equal "run-c" (task-protocol:run-id-value
+                      (task-protocol:event-run-id copy))))
+  (ok (equal "act-c" (task-protocol:activation-id-value
+                      (task-protocol:event-activation-id copy)))))
+
+(deftest sexp-plist-nested-roundtrip
+  (dolist (payload *nested-roundtrip-payloads*)
+    (testing (format nil "sexp-plist ~s" payload)
+      (let* ((event (%step-with-result payload))
+             (copy (%roundtrip event :codec :sexp-plist)))
+        (%assert-nested-roundtrip payload copy)))))
+
+(deftest json-object-nested-roundtrip
+  (dolist (payload *nested-roundtrip-payloads*)
+    (testing (format nil "json-object ~s" payload)
+      (let* ((event (%step-with-result payload))
+             (encoded (task-protocol:encode-event event :codec :json-object))
+             (copy (task-protocol:decode-event encoded :codec :json-object)))
+        (%assert-nested-roundtrip payload copy
+                                  :encoded encoded
+                                  :schema-version "0.2.1")))))
 
 (deftest even-length-string-vector-is-not-a-plist
   (let* ((arr #("a" "b"))
