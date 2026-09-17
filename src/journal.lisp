@@ -245,7 +245,9 @@
 
 (defmethod import-events ((journal in-memory-journal) events)
   (dolist (event events journal)
-    (let* ((e (if (listp event) (event-from-plist event) (copy-event event)))
+    (let* ((e (if (typep event 'task-event)
+                     (copy-event event)
+                     (decode-event event)))
            (id (event-task-id e)))
       (unless (event-seq e)
         (setf (event-seq e) (%next-seq journal id)))

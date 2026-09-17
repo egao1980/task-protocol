@@ -7,7 +7,7 @@ Lispy **CLOS** durable-task journal for [cl-stack](https://github.com/egao1980/c
 | `task-protocol` (`stack-task`) | Protocol + in-memory journal | this repo |
 | `task-backend-sql` | SQL journal + worker leases | [`egao1980/task-backend-sql`](https://github.com/egao1980/task-backend-sql) |
 
-Core `:depends-on ()`. Events serialize as **plists (sexp)**. `serdes-protocol` / `json-protocol` / `datetime-protocol` are soft-used when already loaded — not hard deps.
+Core `:depends-on ()`. Events serialize as a **versioned envelope** (`:schema-version` + `:codec`). The default codec is **`:sexp-plist`**. Consumers **register decoders** (`register-event-codec`); `decode-event` never guesses a vector as a plist. Built-in `:json-object` maps hash-table → object, vector → array (json-protocol Lisp shape). `serdes-protocol` / `json-protocol` / `datetime-protocol` are soft-used when already loaded — not hard deps.
 
 ```lisp
 (asdf:load-system "task-protocol")
@@ -30,14 +30,15 @@ Core `:depends-on ()`. Events serialize as **plists (sexp)**. `serdes-protocol` 
 | Steps | `with-durable-step` — live exec + journal; resume returns the recorded result. Optional `:run-id` / `:activation-id` scope the recorded-step key (absent = 0.1.0 name+idempotency-key) |
 | Identity | `run-id` / `activation-id` CLOS objects — `make-run-id` / `make-activation-id`; also slots on `durable-task` and journaled events |
 | Effects | `effect-receipt` — `record-effect-receipt` journals side effects separately from the step return value |
-| Versions | `schema-version` / `code-version` / `config-version` stamps on events (`*schema-version*` default `"0.2.0"`); mismatch on replay signals `task-replay-divergence` (`continue` to accept) |
+| Versions | `schema-version` / `code-version` / `config-version` stamps on events (`*schema-version*` default `"0.2.1"`); mismatch on replay signals `task-replay-divergence` (`continue` to accept) |
+| Codec | `encode-event` / `decode-event` / `register-event-codec` — `:sexp-plist` (default) and `:json-object`; arrays stay arrays (`#("a" "b")` is not a plist) |
 | Timers | `schedule-wake` / `schedule-recurring` / `fire-due-timers` |
 | Trees | `spawn-child-task` / `join-children` (`:all` `:any` `:quorum`) |
 | Governance | `compact-journal`, `retention-policy`, `redact-event` / `make-redaction-policy` (A7 reuses the policy) |
 
 In-memory backend: `in-memory-journal`, hash table of task-id → event list.
 
-Conditions: `task-error`, `task-replay-divergence` (`journal-hash` slot), `task-serialization-error`, `task-timeout`. Restarts: `retry-step`, `skip-step`, `abort-task`, plus `use-value` on serialization.
+Conditions: `task-error`, `task-replay-divergence` (`journal-hash` slot), `task-serialization-error`, `task-timeout`, `task-unknown-codec`. Restarts: `retry-step`, `skip-step`, `abort-task`, plus `use-value` on serialization and unknown codecs.
 
 `ai-agent-protocol` `:durability` is a later consumer — not implemented here.
 

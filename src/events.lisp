@@ -3,8 +3,11 @@
 ;;; Event classes + sexp (plist) codec. Soft-use serdes-protocol / json-protocol
 ;;; when those packages are already loaded — core has no hard dep.
 
-(defparameter *schema-version* "0.2.0"
-  "Protocol schema version stamped on newly journaled events.")
+(defparameter *schema-version* "0.2.1"
+  "Protocol schema version stamped on newly journaled events.
+   0.2.1 adds a self-describing :codec field on the serialized event
+   envelope. Consumers register decoders via REGISTER-EVENT-CODEC;
+   vectors are never guessed as plists.")
 
 (defvar *code-version* nil
   "Optional code-build stamp copied onto journaled events when bound.")
@@ -211,6 +214,7 @@
 
 (defmethod event-plist ((event task-event))
   (list :type (event-type-keyword event)
+        :codec :sexp-plist
         :task-id (event-task-id event)
         :timestamp (event-timestamp event)
         :seq (event-seq event)
@@ -279,7 +283,9 @@
                 :event-count (snapshot-event-count event))))
 
 (defun event-from-plist (plist)
-  "Rehydrate a TASK-EVENT from a plist produced by EVENT-PLIST."
+  "Rehydrate a TASK-EVENT from a plist produced by EVENT-PLIST.
+   PLIST must be a list — vectors are never treated as objects.
+   JSON/hash-table envelopes go through DECODE-EVENT."
   (check-type plist list)
   (let* ((plist (loop for (k v) on plist by #'cddr
                       collect k collect (%untag-value v)))
