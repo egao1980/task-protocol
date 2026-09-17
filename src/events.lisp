@@ -31,10 +31,9 @@
   (typep x 'run-id))
 
 (defun make-run-id (&optional value)
-  (let ((id (make-instance 'run-id
-                           :value (%normalize-identity-string value "run"))))
-    (check-type (run-id-value id) string)
-    id))
+  (let ((s (%normalize-identity-string value "run")))
+    (check-type s string)
+    (make-instance 'run-id :value s)))
 
 (defclass activation-id ()
   ((value :initarg :value :reader activation-id-value :initform nil)
@@ -43,12 +42,10 @@
 (defun activation-id-p (x)
   (typep x 'activation-id))
 
-(defun make-activation-id (&optional value &key run-id)
-  (let ((id (make-instance 'activation-id
-                           :value (%normalize-identity-string value "activation")
-                           :run-id run-id)))
-    (check-type (activation-id-value id) string)
-    id))
+(defun make-activation-id (&optional value run-id)
+  (let ((s (%normalize-identity-string value "activation")))
+    (check-type s string)
+    (make-instance 'activation-id :value s :run-id (%as-run-id run-id))))
 
 (defun %identity-value (id)
   (typecase id
