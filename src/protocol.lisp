@@ -39,8 +39,19 @@
    (quorum :initarg :quorum :accessor durable-task-quorum :initform 1)
    (error :initarg :error :accessor durable-task-error :initform nil)
    (deadline :initarg :deadline :accessor durable-task-deadline :initform nil)
+   (run-id :initarg :run-id :accessor durable-task-run-id :initform nil)
+   (activation-id :initarg :activation-id :accessor durable-task-activation-id
+                  :initform nil)
+   (schema-version :initarg :schema-version :accessor durable-task-schema-version
+                   :initform nil)
+   (code-version :initarg :code-version :accessor durable-task-code-version
+                 :initform nil)
+   (config-version :initarg :config-version :accessor durable-task-config-version
+                   :initform nil)
    (recorded-steps :initform (make-hash-table :test #'equal)
-                   :accessor durable-task-recorded-steps)))
+                   :accessor durable-task-recorded-steps)
+   (effect-receipts :initform (make-hash-table :test #'equal)
+                    :accessor durable-task-effect-receipts)))
 
 (defun durable-task-p (x)
   (typep x 'durable-task))
@@ -49,7 +60,9 @@
   (format nil "task-~d-~d" (get-universal-time) (incf *id-counter*)))
 
 (defun make-durable-task (&key id parent status retry-policy input journal
-                            children quorum result)
+                            children quorum result
+                            run-id activation-id
+                            schema-version code-version config-version)
   (let ((task (make-instance 'durable-task
                              :id (or id (%next-task-id))
                              :parent parent
@@ -59,7 +72,12 @@
                              :journal journal
                              :children (copy-list children)
                              :quorum (or quorum 1)
-                             :result result)))
+                             :result result
+                             :run-id (%as-run-id run-id)
+                             :activation-id (%as-activation-id activation-id)
+                             :schema-version schema-version
+                             :code-version code-version
+                             :config-version config-version)))
     (check-type (durable-task-id task) string)
     (check-type (durable-task-status task) task-status)
     task))
@@ -94,18 +112,39 @@
 (defgeneric apply-event (task event)
   (:documentation "Mutate TASK from EVENT."))
 
-(defun %step-key (name idempotency-key)
-  (cons (if (stringp name) name (string-downcase (string name)))
-        idempotency-key))
+(defun %step-key (name idempotency-key &optional run-id activation-id)
+  (let ((n (if (stringp name) name (string-downcase (string name))))
+        (r (%identity-value run-id))
+        (a (%identity-value activation-id)))
+    (if (or r a)
+        (list n idempotency-key r a)
+        (cons n idempotency-key))))
+
+(defun %receipt-key (idempotency-key &optional run-id activation-id)
+  (let ((r (%identity-value run-id))
+        (a (%identity-value activation-id)))
+    (if (or r a)
+        (list idempotency-key r a)
+        idempotency-key)))
 
 (defun %record-step (task event)
-  (setf (gethash (%step-key (step-name event) (step-idempotency-key event))
-                 (durable-task-recorded-steps task))
-        event)
-  (when (step-name event)
-    (setf (gethash (%step-key (step-name event) nil)
+  (let ((run (event-run-id event))
+        (act (event-activation-id event)))
+    (setf (gethash (%step-key (step-name event) (step-idempotency-key event)
+                              run act)
                    (durable-task-recorded-steps task))
-          event)))
+          event)
+    (when (step-name event)
+      (setf (gethash (%step-key (step-name event) nil run act)
+                     (durable-task-recorded-steps task))
+            event))))
+
+(defun %record-receipt (task event)
+  (setf (gethash (%receipt-key (effect-receipt-idempotency-key event)
+                               (event-run-id event)
+                               (event-activation-id event))
+                 (durable-task-effect-receipts task))
+        event))
 
 (defmethod apply-event ((task durable-task) (event task-started))
   (when (eq (durable-task-status task) :new)
@@ -116,6 +155,10 @@
   (%record-step task event)
   (when (eq (durable-task-status task) :new)
     (setf (durable-task-status task) :running))
+  task)
+
+(defmethod apply-event ((task durable-task) (event effect-receipt))
+  (%record-receipt task event)
   task)
 
 (defmethod apply-event ((task durable-task) (event timer-set))
@@ -151,18 +194,22 @@
         (durable-task-error task) (event-reason event))
   task)
 
+(defun %event-from-stored (plist default-type)
+  (cond
+    ((typep plist 'task-event) plist)
+    ((and (consp plist) (keywordp (car plist)))
+     (event-from-plist plist))
+    (t (event-from-plist (append (list :type default-type) plist)))))
+
 (defmethod apply-event ((task durable-task) (event journal-snapshot))
   (clrhash (durable-task-recorded-steps task))
+  (clrhash (durable-task-effect-receipts task))
   (setf (durable-task-status task) (or (snapshot-status event) :running)
         (durable-task-result task) (snapshot-result event))
   (dolist (plist (snapshot-steps event))
-    (let ((ev (if (typep plist 'step-completed)
-                  plist
-                  (event-from-plist (if (and (consp plist) (keywordp (car plist)))
-                                        plist
-                                        (append (list :type :step-completed)
-                                                plist))))))
-      (%record-step task ev)))
+    (%record-step task (%event-from-stored plist :step-completed)))
+  (dolist (plist (snapshot-receipts event))
+    (%record-receipt task (%event-from-stored plist :effect-receipt)))
   task)
 
 (defun serializable-p (value)
@@ -265,21 +312,31 @@
        (%ensure-running ,task-var ,journal-var)
        ,@body)))
 
-(defun %step-match (event name idempotency-key)
+(defun %step-match (event name idempotency-key &optional run-id activation-id)
   (and (typep event 'step-completed)
+       (equal (%identity-value run-id) (%identity-value (event-run-id event)))
+       (equal (%identity-value activation-id)
+              (%identity-value (event-activation-id event)))
        (or (and idempotency-key
                 (equal idempotency-key (step-idempotency-key event)))
            (and (null idempotency-key)
                 (equal name (step-name event))))))
 
-(defun %find-recorded-step (task name idempotency-key)
+(defun %find-recorded-step (task name idempotency-key
+                            &optional run-id activation-id)
   (or (and idempotency-key
-           (gethash (%step-key name idempotency-key)
+           (gethash (%step-key name idempotency-key run-id activation-id)
                     (durable-task-recorded-steps task)))
-      (gethash (%step-key name nil)
+      (gethash (%step-key name nil run-id activation-id)
                (durable-task-recorded-steps task))))
 
-(defun %unconsumed-steps (task)
+(defun %same-identity-scope-p (event run-id activation-id)
+  (and (equal (%identity-value run-id)
+              (%identity-value (event-run-id event)))
+       (equal (%identity-value activation-id)
+              (%identity-value (event-activation-id event)))))
+
+(defun %unconsumed-steps (task &optional run-id activation-id)
   (let ((seen (make-hash-table :test #'eq)))
     (maphash (lambda (k event)
                (declare (ignore k))
@@ -290,7 +347,9 @@
                  (declare (ignore ignore))
                  (push event all))
                seen)
-      (set-difference all *consumed-steps* :test #'eq))))
+      (remove-if-not (lambda (event)
+                       (%same-identity-scope-p event run-id activation-id))
+                     (set-difference all *consumed-steps* :test #'eq)))))
 
 (defun check-task-timeout (task &optional (now (get-universal-time)))
   (let ((deadline (or (durable-task-deadline task)
@@ -308,14 +367,58 @@
           (cancel-task task :timeout)
           nil)))))
 
-(defun call-with-durable-step (name idempotency-key retry-policy thunk)
+(defun %resolve-run-id (task run-id)
+  (%as-run-id (or run-id (durable-task-run-id task))))
+
+(defun %resolve-activation-id (task activation-id)
+  (%as-activation-id (or activation-id (durable-task-activation-id task))))
+
+(defun %version-mismatch (event schema-version code-version config-version)
+  (flet ((differs (recorded current)
+           (and recorded current (not (equal recorded current)))))
+    (cond
+      ((differs (event-schema-version event) schema-version)
+       (values (list :schema-version schema-version)
+               (list :schema-version (event-schema-version event))
+               "schema-version mismatch"))
+      ((differs (event-code-version event) code-version)
+       (values (list :code-version code-version)
+               (list :code-version (event-code-version event))
+               "code-version mismatch"))
+      ((differs (event-config-version event) config-version)
+       (values (list :config-version config-version)
+               (list :config-version (event-config-version event))
+               "config-version mismatch"))
+      (t (values nil nil nil)))))
+
+(defun %step-expected (name idempotency-key run-id activation-id)
+  (list :step name
+        :idempotency-key idempotency-key
+        :run-id (%identity-value run-id)
+        :activation-id (%identity-value activation-id)))
+
+(defun call-with-durable-step (name idempotency-key retry-policy thunk
+                               &key run-id activation-id
+                                 schema-version code-version config-version)
   (let* ((task (%current-task))
          (journal (%journal))
          (name (if (stringp name) name (string-downcase (string name))))
          (policy (or retry-policy (durable-task-retry-policy task)))
-         (max (if policy (retry-policy-max-attempts policy) 1)))
+         (max (if policy (retry-policy-max-attempts policy) 1))
+         (run-id (%resolve-run-id task run-id))
+         (activation-id (%resolve-activation-id task activation-id))
+         (schema-version (or schema-version
+                             (durable-task-schema-version task)
+                             *schema-version*))
+         (code-version (or code-version
+                           (durable-task-code-version task)
+                           *code-version*))
+         (config-version (or config-version
+                             (durable-task-config-version task)
+                             *config-version*)))
     (check-task-timeout task)
-    (let ((recorded (%find-recorded-step task name idempotency-key)))
+    (let ((recorded (%find-recorded-step task name idempotency-key
+                                         run-id activation-id)))
       (when recorded
         (when (and idempotency-key
                    (step-name recorded)
@@ -323,21 +426,40 @@
           (error 'task-replay-divergence
                  :task task
                  :journal-hash (journal-hash journal task)
-                 :expected (list :step name :idempotency-key idempotency-key)
+                 :expected (%step-expected name idempotency-key
+                                           run-id activation-id)
                  :actual (list :step (step-name recorded)
                                :idempotency-key (step-idempotency-key recorded))
                  :message "idempotency-key reused with a different step name"))
+        (multiple-value-bind (expected actual message)
+            (%version-mismatch recorded schema-version
+                               code-version config-version)
+          (when expected
+            (restart-case
+                (error 'task-replay-divergence
+                       :task task
+                       :journal-hash (journal-hash journal task)
+                       :expected expected
+                       :actual actual
+                       :message message)
+              (continue ()
+                :report "Use the recorded result despite a version stamp mismatch"
+                nil))))
         (push recorded *consumed-steps*)
         (return-from call-with-durable-step (step-result recorded))))
-    (let ((orphans (%unconsumed-steps task)))
+    (let ((orphans (%unconsumed-steps task run-id activation-id)))
       (when orphans
         (error 'task-replay-divergence
                :task task
                :journal-hash (journal-hash journal task)
-               :expected (list :step name :idempotency-key idempotency-key)
+               :expected (%step-expected name idempotency-key
+                                         run-id activation-id)
                :actual (mapcar (lambda (e)
                                  (list :step (step-name e)
-                                       :idempotency-key (step-idempotency-key e)))
+                                       :idempotency-key (step-idempotency-key e)
+                                       :run-id (%identity-value (event-run-id e))
+                                       :activation-id
+                                       (%identity-value (event-activation-id e))))
                                orphans)
                :message "journal/code mismatch — unconsumed recorded steps remain")))
     (let ((attempts 0)
@@ -353,7 +475,12 @@
                                            :task-id (durable-task-id task)
                                            :name name
                                            :result result
-                                           :idempotency-key idempotency-key)))
+                                           :idempotency-key idempotency-key
+                                           :run-id run-id
+                                           :activation-id activation-id
+                                           :schema-version schema-version
+                                           :code-version code-version
+                                           :config-version config-version)))
                  (append-event journal event)
                  (apply-event task event)
                  (push event *consumed-steps*)
@@ -373,11 +500,80 @@
              (cancel-task task :aborted)
              (return-from call-with-durable-step nil)))))))
 
-(defmacro with-durable-step ((name &key idempotency-key retry-policy) &body body)
+(defmacro with-durable-step ((name &key idempotency-key retry-policy
+                                   run-id activation-id
+                                   schema-version code-version config-version)
+                             &body body)
   "Execute BODY once and journal STEP-COMPLETED. On resume, return the
-   recorded result without re-executing (matched by NAME / IDEMPOTENCY-KEY)."
+   recorded result without re-executing. Matched by NAME / IDEMPOTENCY-KEY
+   and, when supplied, RUN-ID / ACTIVATION-ID."
   `(call-with-durable-step ,name ,idempotency-key ,retry-policy
-                           (lambda () ,@body)))
+                           (lambda () ,@body)
+                           :run-id ,run-id
+                           :activation-id ,activation-id
+                           :schema-version ,schema-version
+                           :code-version ,code-version
+                           :config-version ,config-version))
+
+(defun make-effect-receipt (&key name idempotency-key payload payload-hash
+                              task-id run-id activation-id
+                              schema-version code-version config-version)
+  (let* ((canonical (and payload (canonicalize-value payload)))
+         (hash (or payload-hash (and canonical (payload-hash canonical)))))
+    (make-instance 'effect-receipt
+                   :task-id task-id
+                   :name name
+                   :idempotency-key idempotency-key
+                   :payload canonical
+                   :payload-hash hash
+                   :run-id (%as-run-id run-id)
+                   :activation-id (%as-activation-id activation-id)
+                   :schema-version schema-version
+                   :code-version code-version
+                   :config-version config-version)))
+
+(defun find-effect-receipt (task idempotency-key &key run-id activation-id)
+  "Return the journaled EFFECT-RECEIPT for IDEMPOTENCY-KEY in TASK's
+   identity scope, or NIL."
+  (let ((run-id (%resolve-run-id task run-id))
+        (activation-id (%resolve-activation-id task activation-id)))
+    (gethash (%receipt-key idempotency-key run-id activation-id)
+             (durable-task-effect-receipts task))))
+
+(defun record-effect-receipt (task receipt &key journal)
+  "Append RECEIPT to TASK's journal. Same-scope idempotency-key returns the
+   existing receipt (side effects are not the step return value)."
+  (let* ((journal (%journal (or journal (durable-task-journal task))))
+         (receipt (if (effect-receipt-p receipt)
+                      receipt
+                      (restart-case
+                          (error 'task-error
+                                 :task task
+                                 :message (format nil "not an effect-receipt: ~s"
+                                                  receipt))
+                        (use-value (supplied)
+                          :report "Use a supplied effect-receipt"
+                          supplied)))))
+    (check-type receipt effect-receipt)
+    (unless (event-task-id receipt)
+      (setf (event-task-id receipt) (durable-task-id task)))
+    (unless (event-run-id receipt)
+      (setf (event-run-id receipt)
+            (%resolve-run-id task (event-run-id receipt))))
+    (unless (event-activation-id receipt)
+      (setf (event-activation-id receipt)
+            (%resolve-activation-id task (event-activation-id receipt))))
+    (let ((existing (find-effect-receipt
+                     task
+                     (effect-receipt-idempotency-key receipt)
+                     :run-id (event-run-id receipt)
+                     :activation-id (event-activation-id receipt))))
+      (if existing
+          existing
+          (progn
+            (append-event journal receipt)
+            (apply-event task receipt)
+            receipt)))))
 
 (defun complete-task (task &optional result)
   (let ((journal (%journal (durable-task-journal task)))

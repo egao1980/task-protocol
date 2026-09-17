@@ -29,6 +29,11 @@
            #:durable-task-children
            #:durable-task-quorum
            #:durable-task-error
+           #:durable-task-run-id
+           #:durable-task-activation-id
+           #:durable-task-schema-version
+           #:durable-task-code-version
+           #:durable-task-config-version
 
            #:retry-policy
            #:make-retry-policy
@@ -39,10 +44,29 @@
            #:*task*
            #:*journal*
 
+           #:run-id
+           #:run-id-p
+           #:make-run-id
+           #:run-id-value
+           #:activation-id
+           #:activation-id-p
+           #:make-activation-id
+           #:activation-id-value
+           #:activation-id-run-id
+           #:*schema-version*
+           #:*code-version*
+           #:*config-version*
+           #:payload-hash
+
            #:task-event
            #:event-task-id
            #:event-timestamp
            #:event-seq
+           #:event-run-id
+           #:event-activation-id
+           #:event-schema-version
+           #:event-code-version
+           #:event-config-version
            #:event-plist
            #:event-from-plist
            #:event-type-keyword
@@ -54,6 +78,15 @@
            #:step-name
            #:step-result
            #:step-idempotency-key
+           #:effect-receipt
+           #:effect-receipt-p
+           #:make-effect-receipt
+           #:effect-receipt-name
+           #:effect-receipt-idempotency-key
+           #:effect-receipt-payload-hash
+           #:effect-receipt-payload
+           #:record-effect-receipt
+           #:find-effect-receipt
            #:timer-set
            #:timer-time
            #:timer-spec
@@ -76,6 +109,7 @@
            #:snapshot-status
            #:snapshot-result
            #:snapshot-steps
+           #:snapshot-receipts
            #:snapshot-event-count
 
            #:append-event

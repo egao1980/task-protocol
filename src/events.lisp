@@ -3,17 +3,117 @@
 ;;; Event classes + sexp (plist) codec. Soft-use serdes-protocol / json-protocol
 ;;; when those packages are already loaded — core has no hard dep.
 
+(defparameter *schema-version* "0.2.0"
+  "Protocol schema version stamped on newly journaled events.")
+
+(defvar *code-version* nil
+  "Optional code-build stamp copied onto journaled events when bound.")
+
+(defvar *config-version* nil
+  "Optional config stamp copied onto journaled events when bound.")
+
+(defvar *identity-counter* 0)
+
+(defun %next-identity (prefix)
+  (format nil "~a-~d-~d" prefix (get-universal-time) (incf *identity-counter*)))
+
+(defun %normalize-identity-string (value prefix)
+  (cond
+    ((null value) (%next-identity prefix))
+    ((stringp value) value)
+    ((symbolp value) (string-downcase (string value)))
+    (t (princ-to-string value))))
+
+(defclass run-id ()
+  ((value :initarg :value :reader run-id-value :initform nil)))
+
+(defun run-id-p (x)
+  (typep x 'run-id))
+
+(defun make-run-id (&optional value)
+  (let ((s (%normalize-identity-string value "run")))
+    (check-type s string)
+    (make-instance 'run-id :value s)))
+
+(defclass activation-id ()
+  ((value :initarg :value :reader activation-id-value :initform nil)
+   (run-id :initarg :run-id :reader activation-id-run-id :initform nil)))
+
+(defun activation-id-p (x)
+  (typep x 'activation-id))
+
+(defun make-activation-id (&optional value run-id)
+  (let ((s (%normalize-identity-string value "activation")))
+    (check-type s string)
+    (make-instance 'activation-id :value s :run-id (%as-run-id run-id))))
+
+(defun %identity-value (id)
+  (typecase id
+    (null nil)
+    (run-id (run-id-value id))
+    (activation-id (activation-id-value id))
+    (string id)
+    (symbol (string-downcase (string id)))
+    (t (princ-to-string id))))
+
+(defun %as-run-id (x)
+  (cond
+    ((null x) nil)
+    ((run-id-p x) x)
+    ((or (stringp x) (symbolp x)) (make-run-id x))
+    (t
+     (restart-case
+         (error 'task-error
+                :message (format nil "not a run-id: ~s" x))
+       (use-value (supplied)
+         :report "Use a supplied run-id"
+         (%as-run-id supplied))))))
+
+(defun %as-activation-id (x)
+  (cond
+    ((null x) nil)
+    ((activation-id-p x) x)
+    ((or (stringp x) (symbolp x)) (make-activation-id x))
+    (t
+     (restart-case
+         (error 'task-error
+                :message (format nil "not an activation-id: ~s" x))
+       (use-value (supplied)
+         :report "Use a supplied activation-id"
+         (%as-activation-id supplied))))))
+
 (defclass task-event ()
   ((task-id :initarg :task-id :accessor event-task-id :initform nil)
    (timestamp :initarg :timestamp :accessor event-timestamp
               :initform (get-universal-time))
-   (seq :initarg :seq :accessor event-seq :initform nil)))
+   (seq :initarg :seq :accessor event-seq :initform nil)
+   (run-id :initarg :run-id :accessor event-run-id :initform nil)
+   (activation-id :initarg :activation-id :accessor event-activation-id
+                  :initform nil)
+   (schema-version :initarg :schema-version :accessor event-schema-version
+                   :initform nil)
+   (code-version :initarg :code-version :accessor event-code-version
+                 :initform nil)
+   (config-version :initarg :config-version :accessor event-config-version
+                   :initform nil)))
 
 (defclass step-completed (task-event)
   ((name :initarg :name :accessor step-name)
    (result :initarg :result :accessor step-result :initform nil)
    (idempotency-key :initarg :idempotency-key :accessor step-idempotency-key
                     :initform nil)))
+
+(defclass effect-receipt (task-event)
+  ((name :initarg :name :accessor effect-receipt-name :initform nil)
+   (idempotency-key :initarg :idempotency-key
+                    :accessor effect-receipt-idempotency-key
+                    :initform nil)
+   (payload-hash :initarg :payload-hash :accessor effect-receipt-payload-hash
+                 :initform nil)
+   (payload :initarg :payload :accessor effect-receipt-payload :initform nil)))
+
+(defun effect-receipt-p (x)
+  (typep x 'effect-receipt))
 
 (defclass timer-set (task-event)
   ((time :initarg :time :accessor timer-time)
@@ -46,11 +146,13 @@
   ((status :initarg :status :accessor snapshot-status :initform :running)
    (result :initarg :result :accessor snapshot-result :initform nil)
    (steps :initarg :steps :accessor snapshot-steps :initform nil)
+   (receipts :initarg :receipts :accessor snapshot-receipts :initform nil)
    (event-count :initarg :event-count :accessor snapshot-event-count
                 :initform 0)))
 
 (defparameter *event-type-classes*
   '((:step-completed . step-completed)
+    (:effect-receipt . effect-receipt)
     (:timer-set . timer-set)
     (:timer-fired . timer-fired)
     (:child-spawned . child-spawned)
@@ -111,7 +213,12 @@
   (list :type (event-type-keyword event)
         :task-id (event-task-id event)
         :timestamp (event-timestamp event)
-        :seq (event-seq event)))
+        :seq (event-seq event)
+        :run-id (%identity-value (event-run-id event))
+        :activation-id (%identity-value (event-activation-id event))
+        :schema-version (event-schema-version event)
+        :code-version (event-code-version event)
+        :config-version (event-config-version event)))
 
 (defmethod event-plist :around ((event task-event))
   (let ((plist (call-next-method)))
@@ -123,6 +230,13 @@
           (list :name (step-name event)
                 :result (step-result event)
                 :idempotency-key (step-idempotency-key event))))
+
+(defmethod event-plist ((event effect-receipt))
+  (append (call-next-method)
+          (list :name (effect-receipt-name event)
+                :idempotency-key (effect-receipt-idempotency-key event)
+                :payload-hash (effect-receipt-payload-hash event)
+                :payload (effect-receipt-payload event))))
 
 (defmethod event-plist ((event timer-set))
   (append (call-next-method)
@@ -161,6 +275,7 @@
           (list :status (snapshot-status event)
                 :result (snapshot-result event)
                 :steps (snapshot-steps event)
+                :receipts (snapshot-receipts event)
                 :event-count (snapshot-event-count event))))
 
 (defun event-from-plist (plist)
@@ -173,12 +288,24 @@
          (event (make-instance class
                                :task-id (getf plist :task-id)
                                :timestamp (getf plist :timestamp)
-                               :seq (getf plist :seq))))
+                               :seq (getf plist :seq)
+                               :run-id (%as-run-id (getf plist :run-id))
+                               :activation-id (%as-activation-id
+                                               (getf plist :activation-id))
+                               :schema-version (getf plist :schema-version)
+                               :code-version (getf plist :code-version)
+                               :config-version (getf plist :config-version))))
     (typecase event
       (step-completed
        (setf (step-name event) (getf plist :name)
              (step-result event) (getf plist :result)
              (step-idempotency-key event) (getf plist :idempotency-key)))
+      (effect-receipt
+       (setf (effect-receipt-name event) (getf plist :name)
+             (effect-receipt-idempotency-key event)
+             (getf plist :idempotency-key)
+             (effect-receipt-payload-hash event) (getf plist :payload-hash)
+             (effect-receipt-payload event) (getf plist :payload)))
       (timer-set
        (setf (timer-time event) (getf plist :time)
              (timer-spec event) (getf plist :spec)
@@ -201,6 +328,7 @@
        (setf (snapshot-status event) (or (getf plist :status) :running)
              (snapshot-result event) (getf plist :result)
              (snapshot-steps event) (getf plist :steps)
+             (snapshot-receipts event) (getf plist :receipts)
              (snapshot-event-count event) (or (getf plist :event-count) 0))))
     event))
 
@@ -237,6 +365,16 @@
         (when json
           (ignore-errors (funcall json value)))
         (%prin1-safe value))))
+
+(defun %djb2 (string)
+  (let ((h 5381))
+    (loop for c across string
+          do (setf h (logand #xffffffff (+ (ash h 5) h (char-code c)))))
+    h))
+
+(defun payload-hash (value)
+  "Stable integer hash of VALUE via ENCODE-PAYLOAD."
+  (%djb2 (encode-payload value)))
 
 (defun decode-payload (string)
   "Decode a string from ENCODE-PAYLOAD. Soft-use serdes / json if bound."
