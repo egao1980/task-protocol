@@ -194,12 +194,18 @@
         (durable-task-error task) (event-reason event))
   task)
 
-(defun %event-from-stored (plist default-type)
+(defun %event-from-stored (data default-type)
   (cond
-    ((typep plist 'task-event) plist)
-    ((and (consp plist) (keywordp (car plist)))
-     (event-from-plist plist))
-    (t (event-from-plist (append (list :type default-type) plist)))))
+    ((typep data 'task-event) data)
+    ((and (consp data) (%keyword-plist-p data) (getf data :type))
+     (decode-event data))
+    ((and (consp data) (%keyword-plist-p data))
+     (decode-event (append (list :type default-type) data)))
+    ((hash-table-p data)
+     (decode-event data))
+    ((consp data)
+     (decode-event (append (list :type default-type) data)))
+    (t (decode-event data))))
 
 (defmethod apply-event ((task durable-task) (event journal-snapshot))
   (clrhash (durable-task-recorded-steps task))

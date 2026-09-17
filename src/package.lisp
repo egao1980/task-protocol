@@ -12,6 +12,9 @@
            #:task-serialization-error-value
            #:task-timeout
            #:task-timeout-deadline
+           #:task-unknown-codec
+           #:task-unknown-codec-name
+           #:task-unknown-codec-value
            #:retry-step
            #:skip-step
            #:abort-task
@@ -73,6 +76,19 @@
            #:copy-event
            #:encode-payload
            #:decode-payload
+           #:event-codec
+           #:event-codec-p
+           #:event-codec-name
+           #:event-codec-schema-version
+           #:event-codec-decode
+           #:event-codec-encode
+           #:register-event-codec
+           #:unregister-event-codec
+           #:find-event-codec
+           #:event-codec-names
+           #:encode-event
+           #:decode-event
+           #:*default-event-codec*
 
            #:step-completed
            #:step-name

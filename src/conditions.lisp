@@ -32,3 +32,11 @@
              (format s "task timed out~@[ at ~s~]~@[: ~a~]"
                      (task-timeout-deadline c)
                      (task-error-message c)))))
+
+(define-condition task-unknown-codec (task-error)
+  ((codec :initarg :codec :reader task-unknown-codec-name :initform nil)
+   (value :initarg :value :reader task-unknown-codec-value :initform nil))
+  (:report (lambda (c s)
+             (format s "unknown event codec~@[ ~s~]~@[: ~a~]"
+                     (task-unknown-codec-name c)
+                     (task-error-message c)))))
