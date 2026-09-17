@@ -31,6 +31,16 @@
                      (list "task.step.name" (step-name event)
                            "task.step.idempotency_key"
                            (step-idempotency-key event)))
+                   (when (event-run-id event)
+                     (list "task.run_id"
+                           (if (run-id-p (event-run-id event))
+                               (run-id-value (event-run-id event))
+                               (event-run-id event))))
+                   (when (event-activation-id event)
+                     (list "task.activation_id"
+                           (if (activation-id-p (event-activation-id event))
+                               (activation-id-value (event-activation-id event))
+                               (event-activation-id event))))
                    (when (or (typep event 'timer-set)
                              (typep event 'timer-fired))
                      (list "task.timer.time" (timer-time event)))
