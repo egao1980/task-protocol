@@ -35,6 +35,7 @@ Core `:depends-on ()`. Events serialize as a **versioned envelope** (`:schema-ve
 | Timers | `schedule-wake` / `schedule-recurring` / `fire-due-timers` |
 | Trees | `spawn-child-task` / `join-children` (`:all` `:any` `:quorum`) |
 | Governance | `compact-journal`, `retention-policy`, `redact-event` / `make-redaction-policy` (A7 reuses the policy) |
+| Runtime | `runtime-transition` / `journal-runtime-transition` — execution-plane phases; does not mutate durable-task status. Secret refs only. |
 
 In-memory backend: `in-memory-journal`, hash table of task-id → event list.
 

@@ -1,5 +1,5 @@
 (defsystem "task-protocol"
-  :version "0.2.1"
+  :version "0.2.2"
   :description "CLOS durable-task journal protocol for cl-stack (Temporal-shaped, not a DSL)"
   :author "egao1980"
   :license "MIT"
@@ -17,7 +17,7 @@
   :in-order-to ((test-op (test-op "task-protocol/tests"))))
 
 (defsystem "task-protocol/telemetry"
-  :version "0.2.1"
+  :version "0.2.2"
   :description "Span events for durable-task steps and timers"
   :author "egao1980"
   :license "MIT"
@@ -37,7 +37,8 @@
                (:file "identity-test")
                (:file "codec-test")
                (:file "restarts-test")
-               (:file "telemetry-test"))
+               (:file "telemetry-test")
+               (:file "runtime-test"))
   :perform (test-op (o c)
              (unless (symbol-call :rove :run c)
                (error "tests failed for ~A" (component-name c)))))

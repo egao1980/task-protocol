@@ -101,6 +101,27 @@
         (%redact-tree policy (effect-receipt-payload event)))
   event)
 
+(defmethod redact-event ((policy redaction-policy) (event runtime-transition))
+  (setf (runtime-transition-payload event)
+        (%redact-tree policy (runtime-transition-payload event)))
+  event)
+
+(defun journal-runtime-transition (journal &key task-id runtime-id
+                                          from-phase to-phase
+                                          snapshot-ref worker-id
+                                          secret-refs payload)
+  "Append a RUNTIME-TRANSITION. SECRET-REFS stay refs; PAYLOAD is redacted."
+  (append-event journal
+                (make-runtime-transition
+                 :task-id (or task-id runtime-id)
+                 :runtime-id runtime-id
+                 :from-phase from-phase
+                 :to-phase to-phase
+                 :snapshot-ref snapshot-ref
+                 :worker-id worker-id
+                 :secret-refs secret-refs
+                 :payload payload)))
+
 (defclass retention-policy ()
   ((max-age :initarg :max-age :accessor retention-policy-max-age :initform nil)
    (max-count :initarg :max-count :accessor retention-policy-max-count

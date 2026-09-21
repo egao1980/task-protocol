@@ -3,11 +3,12 @@
 ;;; Event classes + sexp (plist) codec. Soft-use serdes-protocol / json-protocol
 ;;; when those packages are already loaded — core has no hard dep.
 
-(defparameter *schema-version* "0.2.1"
+(defparameter *schema-version* "0.2.2"
   "Protocol schema version stamped on newly journaled events.
    0.2.1 adds a self-describing :codec field on the serialized event
    envelope. Consumers register decoders via REGISTER-EVENT-CODEC;
-   vectors are never guessed as plists.")
+   vectors are never guessed as plists.
+   0.2.2 adds RUNTIME-TRANSITION (execution-plane phase journal).")
 
 (defvar *code-version* nil
   "Optional code-build stamp copied onto journaled events when bound.")
@@ -153,6 +154,36 @@
    (event-count :initarg :event-count :accessor snapshot-event-count
                 :initform 0)))
 
+(defclass runtime-transition (task-event)
+  ((runtime-id :initarg :runtime-id :accessor runtime-transition-id :initform nil)
+   (from-phase :initarg :from-phase :accessor runtime-transition-from :initform nil)
+   (to-phase :initarg :to-phase :accessor runtime-transition-to :initform nil)
+   (snapshot-ref :initarg :snapshot-ref :accessor runtime-transition-snapshot-ref
+                 :initform nil)
+   (worker-id :initarg :worker-id :accessor runtime-transition-worker-id
+              :initform nil)
+   (secret-refs :initarg :secret-refs :accessor runtime-transition-secret-refs
+                :initform nil)
+   (payload :initarg :payload :accessor runtime-transition-payload :initform nil))
+  (:documentation
+   "Execution-plane phase change. Does not mutate durable-task status.
+    SECRET-REFS are name/key/inject plists — never material."))
+
+(defun runtime-transition-p (object)
+  (typep object 'runtime-transition))
+
+(defun make-runtime-transition (&key task-id runtime-id from-phase to-phase
+                                  snapshot-ref worker-id secret-refs payload)
+  (make-instance 'runtime-transition
+                 :task-id task-id
+                 :runtime-id runtime-id
+                 :from-phase from-phase
+                 :to-phase to-phase
+                 :snapshot-ref snapshot-ref
+                 :worker-id worker-id
+                 :secret-refs (copy-list secret-refs)
+                 :payload payload))
+
 (defparameter *event-type-classes*
   '((:step-completed . step-completed)
     (:effect-receipt . effect-receipt)
@@ -164,7 +195,8 @@
     (:task-started . task-started)
     (:task-completed . task-completed)
     (:task-failed . task-failed)
-    (:journal-snapshot . journal-snapshot)))
+    (:journal-snapshot . journal-snapshot)
+    (:runtime-transition . runtime-transition)))
 
 (defun event-type-keyword (event)
   (or (car (rassoc (class-name (class-of event)) *event-type-classes*))
@@ -282,6 +314,16 @@
                 :receipts (snapshot-receipts event)
                 :event-count (snapshot-event-count event))))
 
+(defmethod event-plist ((event runtime-transition))
+  (append (call-next-method)
+          (list :runtime-id (runtime-transition-id event)
+                :from-phase (runtime-transition-from event)
+                :to-phase (runtime-transition-to event)
+                :snapshot-ref (runtime-transition-snapshot-ref event)
+                :worker-id (runtime-transition-worker-id event)
+                :secret-refs (runtime-transition-secret-refs event)
+                :payload (runtime-transition-payload event))))
+
 (defun event-from-plist (plist)
   "Rehydrate a TASK-EVENT from a plist produced by EVENT-PLIST.
    PLIST must be a list — vectors are never treated as objects.
@@ -335,7 +377,15 @@
              (snapshot-result event) (getf plist :result)
              (snapshot-steps event) (getf plist :steps)
              (snapshot-receipts event) (getf plist :receipts)
-             (snapshot-event-count event) (or (getf plist :event-count) 0))))
+             (snapshot-event-count event) (or (getf plist :event-count) 0)))
+      (runtime-transition
+       (setf (runtime-transition-id event) (getf plist :runtime-id)
+             (runtime-transition-from event) (getf plist :from-phase)
+             (runtime-transition-to event) (getf plist :to-phase)
+             (runtime-transition-snapshot-ref event) (getf plist :snapshot-ref)
+             (runtime-transition-worker-id event) (getf plist :worker-id)
+             (runtime-transition-secret-refs event) (getf plist :secret-refs)
+             (runtime-transition-payload event) (getf plist :payload))))
     event))
 
 (defun copy-event (event)

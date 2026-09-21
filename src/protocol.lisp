@@ -161,6 +161,11 @@
   (%record-receipt task event)
   task)
 
+(defmethod apply-event ((task durable-task) (event runtime-transition))
+  "Physical runtime phase. Semantic durable-task status is unchanged."
+  (declare (ignore event))
+  task)
+
 (defmethod apply-event ((task durable-task) (event timer-set))
   (setf (durable-task-status task) :waiting)
   task)

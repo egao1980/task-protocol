@@ -127,6 +127,17 @@
            #:snapshot-steps
            #:snapshot-receipts
            #:snapshot-event-count
+           #:runtime-transition
+           #:runtime-transition-p
+           #:make-runtime-transition
+           #:runtime-transition-id
+           #:runtime-transition-from
+           #:runtime-transition-to
+           #:runtime-transition-snapshot-ref
+           #:runtime-transition-worker-id
+           #:runtime-transition-secret-refs
+           #:runtime-transition-payload
+           #:journal-runtime-transition
 
            #:append-event
            #:replay-journal
