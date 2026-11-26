@@ -3,12 +3,13 @@
 ;;; Event classes + sexp (plist) codec. Soft-use serdes-protocol / json-protocol
 ;;; when those packages are already loaded — core has no hard dep.
 
-(defparameter *schema-version* "0.2.2"
+(defparameter *schema-version* "0.3.0"
   "Protocol schema version stamped on newly journaled events.
    0.2.1 adds a self-describing :codec field on the serialized event
    envelope. Consumers register decoders via REGISTER-EVENT-CODEC;
    vectors are never guessed as plists.
-   0.2.2 adds RUNTIME-TRANSITION (execution-plane phase journal).")
+   0.2.2 adds RUNTIME-TRANSITION (execution-plane phase journal).
+   0.3.0 adds JOB-TRANSITION and JOB-PROGRESS (job queue journal).")
 
 (defvar *code-version* nil
   "Optional code-build stamp copied onto journaled events when bound.")
@@ -184,8 +185,42 @@
                  :secret-refs (copy-list secret-refs)
                  :payload payload))
 
+;;; 0.3.0 job queue events (given). A job's journal is the journal entry
+;;; keyed by the job id (EVENT-TASK-ID = job id); SEQ is the journal's
+;;; per-id sequence (1, 2, 3, ...).
+
+(defclass job-transition (task-event)
+  ((from-state :initarg :from-state :accessor job-transition-from
+               :initform nil
+               :documentation "Previous job state; NIL for the submit event.")
+   (to-state :initarg :to-state :accessor job-transition-to :initform nil)
+   (worker-id :initarg :worker-id :accessor job-transition-worker-id
+              :initform nil)
+   (reason :initarg :reason :accessor job-transition-reason :initform nil
+           :documentation "Keyword or string: :submitted :claimed :completed
+            :failed :canceled :forced :lease-expired, or the caller's reason."))
+  (:documentation
+   "One job state change. Every state change appends exactly one."))
+
+(defun job-transition-p (object)
+  (typep object 'job-transition))
+
+(defclass job-progress (task-event)
+  ((phase :initarg :phase :accessor job-progress-phase :initform nil)
+   (fraction :initarg :fraction :accessor job-progress-fraction :initform nil
+             :documentation "NIL (indeterminate) or a real in [0, 1].")
+   (message :initarg :message :accessor job-progress-message :initform nil)
+   (worker-id :initarg :worker-id :accessor job-progress-worker-id
+              :initform nil))
+  (:documentation "Progress reported by the worker running a job."))
+
+(defun job-progress-p (object)
+  (typep object 'job-progress))
+
 (defparameter *event-type-classes*
-  '((:step-completed . step-completed)
+  '((:job-transition . job-transition)
+    (:job-progress . job-progress)
+    (:step-completed . step-completed)
     (:effect-receipt . effect-receipt)
     (:timer-set . timer-set)
     (:timer-fired . timer-fired)
@@ -324,6 +359,20 @@
                 :secret-refs (runtime-transition-secret-refs event)
                 :payload (runtime-transition-payload event))))
 
+(defmethod event-plist ((event job-transition))
+  (append (call-next-method)
+          (list :from-state (job-transition-from event)
+                :to-state (job-transition-to event)
+                :worker-id (job-transition-worker-id event)
+                :reason (job-transition-reason event))))
+
+(defmethod event-plist ((event job-progress))
+  (append (call-next-method)
+          (list :phase (job-progress-phase event)
+                :fraction (job-progress-fraction event)
+                :message (job-progress-message event)
+                :worker-id (job-progress-worker-id event))))
+
 (defun event-from-plist (plist)
   "Rehydrate a TASK-EVENT from a plist produced by EVENT-PLIST.
    PLIST must be a list — vectors are never treated as objects.
@@ -344,6 +393,16 @@
                                :code-version (getf plist :code-version)
                                :config-version (getf plist :config-version))))
     (typecase event
+      (job-transition
+       (setf (job-transition-from event) (getf plist :from-state)
+             (job-transition-to event) (getf plist :to-state)
+             (job-transition-worker-id event) (getf plist :worker-id)
+             (job-transition-reason event) (getf plist :reason)))
+      (job-progress
+       (setf (job-progress-phase event) (getf plist :phase)
+             (job-progress-fraction event) (getf plist :fraction)
+             (job-progress-message event) (getf plist :message)
+             (job-progress-worker-id event) (getf plist :worker-id)))
       (step-completed
        (setf (step-name event) (getf plist :name)
              (step-result event) (getf plist :result)

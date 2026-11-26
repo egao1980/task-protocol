@@ -183,6 +183,94 @@
            #:make-redaction-policy
            #:redact-event
            #:*redaction-policy*
-           #:+default-sensitive-keys+))
+           #:+default-sensitive-keys+
+
+           ;; 0.3.0 job queue
+           #:job-error
+           #:job-error-job-id
+           #:job-not-found
+           #:job-state-error
+           #:job-state-error-state
+           #:job-state-error-operation
+           #:job-lease-lost
+           #:job-lease-lost-worker-id
+           #:job-lease-lost-owner
+           #:unknown-resource-class
+           #:unknown-resource-class-name
+           #:job-progress-error
+           #:job-progress-error-fraction
+
+           #:job-transition
+           #:job-transition-p
+           #:job-transition-from
+           #:job-transition-to
+           #:job-transition-worker-id
+           #:job-transition-reason
+           #:job-progress
+           #:job-progress-p
+           #:job-progress-phase
+           #:job-progress-fraction
+           #:job-progress-message
+           #:job-progress-worker-id
+
+           #:job-state
+           #:job-transition-allowed-p
+           #:job-terminal-state-p
+           #:job
+           #:job-p
+           #:job-id
+           #:job-kind
+           #:job-payload
+           #:job-priority
+           #:job-resource-class
+           #:job-submitted-at
+           #:job-started-at
+           #:job-finished-at
+           #:job-updated-at
+           #:job-result
+           #:job-failure
+           #:job-worker-id
+           #:job-lease-until
+           #:job-attempts
+           #:job-cancel-requested
+
+           #:resource-class
+           #:resource-class-p
+           #:resource-class-name
+           #:resource-class-limit
+           #:define-resource-class
+           #:find-resource-class
+           #:list-resource-classes
+           #:resource-class-usage
+
+           #:job-queue
+           #:job-queue-p
+           #:job-queue-journal
+           #:in-memory-job-queue
+           #:in-memory-job-queue-p
+           #:make-in-memory-job-queue
+
+           #:submit-job
+           #:job-status
+           #:list-jobs
+           #:cancel-job
+           #:cancel-requested-p
+           #:claim-job
+           #:heartbeat-job
+           #:complete-job
+           #:fail-job
+           #:acknowledge-cancel
+           #:expire-job-leases
+
+           #:append-job-event
+           #:report-job-progress
+           #:job-events
+           #:job-subscription
+           #:job-subscription-job-id
+           #:job-subscription-callback
+           #:job-subscription-last-seq
+           #:job-subscription-active-p
+           #:subscribe-job-events
+           #:unsubscribe-job-events))
 
 (in-package #:task-protocol)
