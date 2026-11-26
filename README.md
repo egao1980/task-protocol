@@ -53,8 +53,7 @@ page. Issues [#5](https://github.com/egao1980/task-protocol/issues/5)
 (progress events and subscription).
 
 This section is a contract: the protocol is written down and tested, the
-in-memory backend is stubbed (every method signals `task-error` "… is not
-implemented yet"). The generic-function docstrings in `src/jobs.lisp` are
+in-memory backend implements it (`src/queue-memory.lisp`). The generic-function docstrings in `src/jobs.lisp` are
 the spec; the SQL backend (`task-backend-sql` 0.2) implements the same
 generic functions later.
 
@@ -129,7 +128,7 @@ the tests use `bordeaux-threads`, already in the test graph through Rove.
 | `src/lock.lisp` | given |
 | `src/jobs.lisp` (model, state table, generic functions, spec) | given |
 | `src/queue-memory.lisp` (`in-memory-job-queue`, constructor) | given |
-| `src/queue-memory.lisp` (every method) | stubbed |
+| `src/queue-memory.lisp` (every method) | implemented |
 | `tests/job-support.lisp` | given (helpers) |
 | `tests/job-queue-test.lisp` | contract |
 | `tests/job-admission-test.lisp` | contract |
